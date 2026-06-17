@@ -3,7 +3,7 @@ uvicorn[standard]
 torch
 torchvision
 torchmetrics
-opencv-python
+opencv-python-headless
 numpy
 pillow
 segmentation-models-pytorch
