@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy backend application files
 COPY main.py .
 # Copy the trained weights file
-COPY ../best_model.pth /best_model.pth
+COPY best_model.pth /app/best_model.pth
 
 EXPOSE 8000
 
