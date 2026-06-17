@@ -224,27 +224,11 @@ DEVICE = torch.device("cuda" if torch.cuda.device_count() > 0 else "cpu")
 
 app = FastAPI(title="HydroTech AI Flood Detection API")
 
-# Configure CORS to accept requests from our Vite frontends
-# Additional origins can be injected via EXTRA_CORS_ORIGINS env-var (comma-separated)
-# e.g. EXTRA_CORS_ORIGINS=https://my-app.vercel.app,https://staging.vercel.app
-_base_origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:3001",
-    "http://127.0.0.1:3001",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-_extra_origins = [
-    o.strip()
-    for o in os.environ.get("EXTRA_CORS_ORIGINS", "").split(",")
-    if o.strip()
-]
-
+# Configure CORS to accept requests from any origin (public inference API)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_base_origins + _extra_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
