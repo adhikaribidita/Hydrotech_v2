@@ -2,8 +2,8 @@
 
 HydroTech is a cinematic, enterprise-grade flood detection platform that leverages satellite imagery and deep learning to perform real-time water inundation segmentation. 
 
-* **Live Demo (Frontend):** [https://hydro-tech-ai-flood-detection.vercel.app/](https://hydro-tech-ai-flood-detection.vercel.app/)
-* **Inference API (Backend):** [https://hydrotech-ai-flood-detection-1hydrotech.onrender.com/health](https://hydrotech-ai-flood-detection-1hydrotech.onrender.com/health)
+* **Live Demo (Frontend):** [https://hydrotech-v2.vercel.app/](https://hydrotech-v2.vercel.app/)
+* **Inference API (Backend):** [https://hydrotech-api.onrender.com/health](https://hydrotech-api.onrender.com/health)
 
 ---
 
