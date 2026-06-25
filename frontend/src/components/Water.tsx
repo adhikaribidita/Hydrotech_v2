@@ -38,8 +38,6 @@ export default function Water() {
 
   // Fragment shader renders deep blue water with glowing cyan swells, specular highlights, and edge-feathering
   const fs = `
-    #extension GL_OES_standard_derivatives : enable
-    
     varying vec2 vUv;
     varying vec3 vPosition;
     varying float vElevation;
@@ -50,8 +48,8 @@ export default function Water() {
       float distFromCenter = distance(vUv, vec2(0.5));
       float edgeAlpha = smoothstep(0.5, 0.3, distFromCenter);
       
-      // GPU accelerated derivatives for per-pixel normal calculation
-      vec3 normal = normalize(cross(dFdx(vPosition), dFdy(vPosition)));
+      // Fake normal to avoid WebGL cross-platform dFdx/dFdy issues
+      vec3 normal = normalize(vec3(0.0, 0.0, 1.0));
       
       // Virtual light source for specular highlights (deep blue lighting / sun reflection)
       vec3 lightDir = normalize(vec3(2.0, 5.0, 3.0));

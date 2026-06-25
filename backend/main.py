@@ -258,32 +258,78 @@ def load_model():
     return model
 
 
+def run_cv_fallback(image_bgr):
+    """
+    Advanced CV-based water/flood segmentation on RGB/HSV/Lab spaces.
+    Returns:
+        clean (256, 256) uint8 0/1 array
+        prob (256, 256) float32 probability map
+    """
+    resized = cv2.resize(image_bgr, (IMG_SIZE, IMG_SIZE))
+    hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    
+    b = resized[:, :, 0].astype(np.float32)
+    g = resized[:, :, 1].astype(np.float32)
+    r = resized[:, :, 2].astype(np.float32)
+    
+    # Calculate ratios and indices
+    b_r_ratio = b / (r + 1.0)
+    g_r_ratio = g / (r + 1.0)
+    ndwi = (g - r) / (g + r + 1e-6)
+    br_index = (b - r) / (b + r + 1e-6)
+    
+    # Smoothness / Texture filter (water surface is flat/smooth)
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    grad_mag = cv2.magnitude(grad_x, grad_y)
+    smoothness = cv2.boxFilter(grad_mag, -1, (7, 7))
+    is_smooth = smoothness < 12.0
+    
+    # Exclude conditions
+    # Vegetation has H in [35, 85] but very low blue bias (b_r_ratio < 0.75)
+    is_veg = (h >= 35) & (h <= 85) & (b_r_ratio < 0.75)
+    is_shadow = v < 15  # Raised shadow threshold slightly
+    is_bright = (v > 225) & (s < 50)
+    
+    # Base probability score
+    prob = np.zeros_like(v, dtype=np.float32)
+    
+    # Blue/Teal water color matching
+    prob[(h >= 75) & (h <= 145) & (s >= 15) & (v >= 15) & (v <= 225)] += 0.6
+    
+    # Green water color matching (e.g. algae/turbid water)
+    prob[(h >= 35) & (h < 75) & (s >= 15) & (v >= 15) & (v <= 180) & (g_r_ratio > 1.0)] += 0.5
+    
+    # Muddy/Brown water color matching (brown has Hue in orange/yellow range, must be smooth)
+    prob[(h >= 5) & (h < 35) & (s >= 10) & (s <= 180) & (v >= 20) & (v <= 180) & is_smooth] += 0.5
+    
+    # Deep/Dark water matching (enforces v >= 15)
+    prob[(v >= 15) & (v < 35) & (s < 50) & is_smooth & (b_r_ratio > 0.95)] += 0.5
+    
+    # Add index components
+    prob += 0.2 * np.clip(br_index, 0.0, 1.0)
+    prob += 0.2 * np.clip(ndwi, 0.0, 1.0)
+    
+    # Penalize non-water features
+    prob[is_veg] -= 0.6
+    prob[is_shadow] -= 0.5
+    prob[is_bright] -= 0.5
+    
+    # Optimize: Penalize urban/grey areas to reduce false positives
+    is_urban = (s < 30) & (v > 80) & (v < 225) & (~is_smooth)
+    prob[is_urban] -= 0.4
+    
+    prob = np.clip(prob, 0.0, 1.0)
+    
+    # Apply standard morphological cleanup pipeline
+    clean = clean_mask_v2(prob, image_bgr_256=resized, threshold=THRESHOLD, use_crf=False)
+    return clean, prob
+
+
 def fallback_inference(image_bgr):
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-    _, mask = cv2.threshold(gray, 110, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (21, 21))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    mask = cv2.GaussianBlur(mask, (15, 15), 0)
-    mask_bin = (mask > 127).astype(np.uint8) * 255
-
-    heatmap = cv2.applyColorMap(mask_bin, cv2.COLORMAP_JET)
-    overlay = image_bgr.copy()
-    # Deep blue flood overlay (satellite convention)
-    overlay[mask_bin == 255] = np.clip(
-        overlay[mask_bin == 255].astype(np.float32) * 0.30
-        + np.array([210, 70, 0], dtype=np.float32) * 0.70,
-        0, 255,
-    ).astype(np.uint8)
-
-    flood_percent = round(float(mask_bin.mean() / 255 * 100), 2)
-    if flood_percent < 5:
-        status = "LOW RISK"
-    elif flood_percent < 30:
-        status = "MODERATE RISK"
-    else:
-        status = "HIGH RISK"
-
-    return overlay, mask_bin, heatmap, status, f"{flood_percent}%"
+    return run_inference_fallback(image_bgr)
 
 
 model = None
@@ -610,33 +656,39 @@ def run_inference(image_bgr):
 
 def run_inference_fallback(image_bgr):
     try:
-        resized = cv2.resize(image_bgr, (IMG_SIZE, IMG_SIZE))
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        orig_h, orig_w = image_bgr.shape[:2]
         
-        # Simple adaptive threshold to mock flooded areas
-        thresh_val = int(np.percentile(gray, 60))
-        _, mask = cv2.threshold(gray, thresh_val, 255, cv2.THRESH_BINARY)
+        # Run CV-based fallback to get mask and prob
+        clean, prob = run_cv_fallback(image_bgr)
+        mask = (clean * 255).astype(np.uint8)
         
-        heatmap = cv2.applyColorMap(cv2.equalizeHist(gray), cv2.COLORMAP_JET)
-        overlay = resized.copy()
+        # Resize back to original resolution
+        mask_full = cv2.resize(mask, (orig_w, orig_h), interpolation=cv2.INTER_NEAREST)
         
-        # Deep blue overlay (satellite convention)
-        overlay[mask == 255] = np.clip(
-            overlay[mask == 255].astype(np.float32) * 0.30
+        # Heatmap from probability map
+        heatmap_256 = cv2.applyColorMap((prob * 255).astype(np.uint8), cv2.COLORMAP_JET)
+        heatmap = cv2.resize(heatmap_256, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+        
+        # Overlay
+        overlay = image_bgr.copy()
+        flood_pixels = mask_full == 255
+        overlay[flood_pixels] = np.clip(
+            overlay[flood_pixels].astype(np.float32) * 0.30
             + np.array([210, 70, 0], dtype=np.float32) * 0.70,
             0, 255
         ).astype(np.uint8)
-
-        flood_percent = round(float(mask.mean() / 255 * 100), 2)
+        
+        flood_percent = round(float(clean.mean() * 100), 2)
         if flood_percent < 5:
             status = "LOW RISK"
         elif flood_percent < 30:
             status = "MODERATE RISK"
         else:
             status = "HIGH RISK"
-
-        return overlay, mask, heatmap, status, f"{flood_percent}%"
-    except Exception:
+            
+        return overlay, mask_full, heatmap, status, f"{flood_percent}%"
+    except Exception as e:
+        print(f"Error in fallback: {e}")
         return None, None, None, "ERROR", "0%"
 
 if __name__ == "__main__":

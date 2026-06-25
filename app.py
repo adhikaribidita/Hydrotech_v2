@@ -19,9 +19,18 @@ else:
 # =====================================
 # SETTINGS & MODEL INITIALIZATION
 # =====================================
-MODEL_PATH = r"D:\FLOOD_DETECTION_PROJECT\best_model.pth"
 IMG_SIZE   = 256
 THRESHOLD  = 0.5
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATHS = [
+    r"D:\FLOOD_DETECTION_PROJECT\best_model.pth",                      # original hardcoded legacy path
+    os.path.join(BASE_DIR, "best_model.pth"),                          # project root
+    os.path.join(BASE_DIR, "backend", "best_model.pth"),                # backend/best_model.pth
+    os.path.join(BASE_DIR, "saved_model", "unetpp_flood_full.pth"),     # saved_model/unetpp_flood_full.pth
+    os.path.join(BASE_DIR, "saved_model", "unetpp_flood_weights.pth"),  # saved_model/unetpp_flood_weights.pth
+]
+MODEL_PATH = next((p for p in MODEL_PATHS if os.path.exists(p)), MODEL_PATHS[1])
 
 model = smp.UnetPlusPlus(
     encoder_name    = "efficientnet-b3",
@@ -31,10 +40,18 @@ model = smp.UnetPlusPlus(
     activation      = None
 ).to(DEVICE)
 
+model_loaded = False
 if os.path.exists(MODEL_PATH):
-    model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
-    model = model.to(DEVICE)
-    model.eval()
+    try:
+        model.load_state_dict(torch.load(MODEL_PATH, map_location='cpu'))
+        model = model.to(DEVICE)
+        model.eval()
+        model_loaded = True
+        print(f"Model loaded successfully from {MODEL_PATH}")
+    except Exception as e:
+        print(f"Error loading model weights from {MODEL_PATH}: {e}")
+else:
+    print(f"Model weights not found. Running in advanced CV fallback mode.")
 
 # =====================================
 # POST-PROCESSING
@@ -96,23 +113,93 @@ def clean_mask(prob_map: np.ndarray, threshold: float = THRESHOLD) -> np.ndarray
 # =====================================
 # INFERENCE ENGINE
 # =====================================
+def run_cv_fallback(image_bgr):
+    """
+    Advanced CV-based water/flood segmentation on RGB/HSV/Lab spaces.
+    Returns:
+        clean (256, 256) uint8 0/1 array
+        prob (256, 256) float32 probability map
+    """
+    resized = cv2.resize(image_bgr, (IMG_SIZE, IMG_SIZE))
+    hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    
+    b = resized[:, :, 0].astype(np.float32)
+    g = resized[:, :, 1].astype(np.float32)
+    r = resized[:, :, 2].astype(np.float32)
+    
+    # Calculate ratios and indices
+    b_r_ratio = b / (r + 1.0)
+    g_r_ratio = g / (r + 1.0)
+    ndwi = (g - r) / (g + r + 1e-6)
+    br_index = (b - r) / (b + r + 1e-6)
+    
+    # Smoothness / Texture filter (water surface is flat/smooth)
+    gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+    grad_mag = cv2.magnitude(grad_x, grad_y)
+    smoothness = cv2.boxFilter(grad_mag, -1, (7, 7))
+    is_smooth = smoothness < 12.0
+    
+    # Exclude conditions
+    is_veg = (h >= 35) & (h <= 85) & (b_r_ratio < 0.75)
+    is_shadow = v < 15  # Raised shadow threshold slightly
+    is_bright = (v > 225) & (s < 50)
+    
+    # Base probability score
+    prob = np.zeros_like(v, dtype=np.float32)
+    
+    # Blue/Teal water color matching
+    prob[(h >= 75) & (h <= 145) & (s >= 15) & (v >= 15) & (v <= 225)] += 0.6
+    
+    # Green water color matching (e.g. algae/turbid water)
+    prob[(h >= 35) & (h < 75) & (s >= 15) & (v >= 15) & (v <= 180) & (g_r_ratio > 1.0)] += 0.5
+    
+    # Muddy/Brown water color matching (brown has Hue in orange/yellow range, must be smooth)
+    prob[(h >= 5) & (h < 35) & (s >= 10) & (s <= 180) & (v >= 20) & (v <= 180) & is_smooth] += 0.5
+    
+    # Deep/Dark water matching (enforces v >= 15)
+    prob[(v >= 15) & (v < 35) & (s < 50) & is_smooth & (b_r_ratio > 0.95)] += 0.5
+    
+    # Add index components
+    prob += 0.2 * np.clip(br_index, 0.0, 1.0)
+    prob += 0.2 * np.clip(ndwi, 0.0, 1.0)
+    
+    # Penalize non-water features
+    prob[is_veg] -= 0.6
+    prob[is_shadow] -= 0.5
+    prob[is_bright] -= 0.5
+    
+    prob = np.clip(prob, 0.0, 1.0)
+    
+    # Apply standard morphological cleanup pipeline
+    clean = clean_mask(prob, THRESHOLD)
+    return clean, prob
+
+
 def predict_flood(image_bgr):
     if image_bgr is None:
         return None, None, None, "Error", "0%"
 
     h_orig, w_orig = image_bgr.shape[:2]
     image_resized  = cv2.resize(image_bgr, (IMG_SIZE, IMG_SIZE))
-    image_rgb      = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
 
-    img_tensor = torch.from_numpy(image_rgb).permute(2, 0, 1).float().to(DEVICE)
-    img_tensor = img_tensor.unsqueeze(0).div(255.0)
+    if model_loaded:
+        image_rgb  = cv2.cvtColor(image_resized, cv2.COLOR_BGR2RGB)
+        img_tensor = torch.from_numpy(image_rgb).permute(2, 0, 1).float().to(DEVICE)
+        img_tensor = img_tensor.unsqueeze(0).div(255.0)
 
-    with torch.inference_mode():
-        output   = model(img_tensor)
-        prob_map = torch.sigmoid(output).squeeze().cpu().numpy()
+        with torch.inference_mode():
+            output   = model(img_tensor)
+            prob_map = torch.sigmoid(output).squeeze().cpu().numpy()
 
-    # --- Post-process: remove salt-and-pepper noise ---
-    clean      = clean_mask(prob_map, THRESHOLD)          # (256,256) uint8 0/1
+        # --- Post-process: remove salt-and-pepper noise ---
+        clean      = clean_mask(prob_map, THRESHOLD)          # (256,256) uint8 0/1
+    else:
+        # Run CV-based fallback to get mask and prob
+        clean, prob_map = run_cv_fallback(image_bgr)
+
     pred_mask  = clean                                    # used for metrics
     mask_img   = (clean * 255).astype(np.uint8)           # (256,256) uint8 0/255
 

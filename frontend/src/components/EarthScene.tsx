@@ -32,7 +32,7 @@ const AtmosphereShader = {
       // Glow is brightest at the outer edges of the sphere silhouette relative to view vector
       vec3 normal = normalize(vNormal);
       vec3 viewDir = normalize(vViewPosition);
-      float intensity = pow(0.75 - dot(normal, vec3(0.0, 0.0, 1.0)), 3.5);
+      float intensity = pow(max(0.0, 0.75 - dot(normal, viewDir)), 3.5);
       gl_FragColor = vec4(uColor, 1.0) * intensity * uIntensityMultiplier;
     }
   `

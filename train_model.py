@@ -237,6 +237,7 @@ class FloodDataset(Dataset):
         mask = torch.tensor(mask).unsqueeze(0).float()
 
         if self.augment:
+            # 1. Spatial/Geometric Augmentations (must apply to both img and mask)
             if random.random() > 0.5:
                 img  = TF.hflip(img)
                 mask = TF.hflip(mask)
@@ -247,6 +248,28 @@ class FloodDataset(Dataset):
                 k    = random.choice([1, 2, 3])
                 img  = torch.rot90(img,  k, dims=[1, 2])
                 mask = torch.rot90(mask, k, dims=[1, 2])
+            
+            # Random Affine (Rotation, Scale, Translation)
+            if random.random() > 0.5:
+                angle = random.uniform(-15, 15)
+                translate = (random.uniform(-0.1, 0.1) * img.shape[2], random.uniform(-0.1, 0.1) * img.shape[1])
+                scale = random.uniform(0.9, 1.1)
+                img = TF.affine(img, angle=angle, translate=list(translate), scale=scale, shear=0)
+                mask = TF.affine(mask, angle=angle, translate=list(translate), scale=scale, shear=0)
+
+            # 2. Photometric Augmentations (apply only to img)
+            if random.random() > 0.5:
+                # Color Jitter
+                brightness = random.uniform(0.8, 1.2)
+                contrast = random.uniform(0.8, 1.2)
+                saturation = random.uniform(0.8, 1.2)
+                img = TF.adjust_brightness(img, brightness)
+                img = TF.adjust_contrast(img, contrast)
+                img = TF.adjust_saturation(img, saturation)
+            
+            if random.random() > 0.5:
+                # Gaussian Blur for out-of-focus simulation
+                img = TF.gaussian_blur(img, kernel_size=[3, 3])
 
         return img, mask
 
@@ -288,8 +311,8 @@ print("GPU memory after dummy:", round(torch.cuda.memory_allocated() / 1e9, 3), 
 # [UPDATED] Mixed precision for faster GPU training
 # =====================================
 import torch.nn as nn
-from torch.optim import Adam
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.amp import GradScaler, autocast
 import time
 
@@ -297,18 +320,25 @@ EPOCHS   = 30
 LR       = 1e-3
 PATIENCE = 5
 
-def dice_bce_loss(preds, targets, smooth=1e-6):
+def dice_focal_loss(preds, targets, smooth=1e-6, alpha=0.25, gamma=2.0):
+    # Dice Loss
     preds_sig = torch.sigmoid(preds)
     inter = (preds_sig * targets).sum(dim=(2, 3))
     dice  = 1 - (2 * inter + smooth) / (
         preds_sig.sum(dim=(2, 3)) + targets.sum(dim=(2, 3)) + smooth
     )
-    bce = nn.functional.binary_cross_entropy_with_logits(preds, targets)
-    return dice.mean() + bce
+    
+    # Focal Loss (using BCEWithLogitsLoss)
+    bce = nn.functional.binary_cross_entropy_with_logits(preds, targets, reduction='none')
+    p_t = preds_sig * targets + (1 - preds_sig) * (1 - targets)
+    focal_loss = alpha * ((1 - p_t) ** gamma) * bce
+    focal_loss = focal_loss.mean()
+    
+    return dice.mean() + focal_loss
 
-criterion = dice_bce_loss
-optimizer = Adam(model.parameters(), lr=LR)
-scheduler = ReduceLROnPlateau(optimizer, mode="min", patience=3, factor=0.5)
+criterion = dice_focal_loss
+optimizer = AdamW(model.parameters(), lr=LR, weight_decay=1e-4)
+scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
 
 scaler = GradScaler("cuda") if DEVICE.type == "cuda" else None
 
@@ -355,7 +385,7 @@ for epoch in range(1, EPOCHS + 1):
             val_loss += criterion(preds, masks).item()
     val_loss /= len(val_loader)
 
-    scheduler.step(val_loss)
+    scheduler.step()
     train_losses.append(train_loss)
     val_losses.append(val_loss)
 
