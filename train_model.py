@@ -22,10 +22,10 @@ print("Imports done.")
 # =====================================
 # BLOCK 2 - DATASET PATHS
 # =====================================
-TRAIN_IMG_DIR  = r"D:\FLOOD_DETECTION_PROJECT\dataset\train_images"
-TRAIN_MASK_DIR = r"D:\FLOOD_DETECTION_PROJECT\dataset\train_masks"
-VAL_IMG_DIR    = r"D:\FLOOD_DETECTION_PROJECT\dataset\val_images"
-VAL_MASK_DIR   = r"D:\FLOOD_DETECTION_PROJECT\dataset\val_masks"
+TRAIN_IMG_DIR  = r"dataset\train_images"
+TRAIN_MASK_DIR = r"dataset\train_masks"
+VAL_IMG_DIR    = r"dataset\val_images"
+VAL_MASK_DIR   = r"dataset\val_masks"
 
 IMG_SIZE    = 256
 NUM_CLASSES = 10
@@ -95,7 +95,7 @@ print("Val pairs:  ", len(val_images))
 # =====================================
 from concurrent.futures import ThreadPoolExecutor
 
-CACHE_DIR = r"D:\FLOOD_DETECTION_PROJECT\cache"
+CACHE_DIR = r"cache"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 NUM_WORKERS = 2
@@ -398,13 +398,13 @@ for epoch in range(1, EPOCHS + 1):
 
     if val_loss < best_val_loss:
         best_val_loss = val_loss
-        torch.save(model.state_dict(), r"D:\FLOOD_DETECTION_PROJECT\best_model.pth")
-        print(f"  ✅ Best model saved (val_loss={best_val_loss:.4f})")
+        torch.save(model.state_dict(), r"best_model.pth")
+        print(f"  Best model saved (val_loss={best_val_loss:.4f})")
         no_improve = 0
     else:
         no_improve += 1
         if no_improve >= PATIENCE:
-            print(f"  ⏹ Early stopping at epoch {epoch}")
+            print(f"  Early stopping at epoch {epoch}")
             break
 
 print("\nTraining complete. Best val loss:", round(best_val_loss, 4))
@@ -424,7 +424,7 @@ print(torch.version.cuda)
 # =====================================
 # BLOCK 9 - EVALUATION & METRICS
 # =====================================
-model.load_state_dict(torch.load(r"D:\FLOOD_DETECTION_PROJECT\best_model.pth", map_location=DEVICE))
+model.load_state_dict(torch.load(r"best_model.pth", map_location=DEVICE))
 model.eval()
 
 def compute_metrics(loader, model, threshold=0.5):
@@ -476,7 +476,7 @@ except ModuleNotFoundError:
     import onnx
     print("onnx installed successfully.")
 
-SAVE_DIR = r"D:\FLOOD_DETECTION_PROJECT\saved_model"
+SAVE_DIR = r"saved_model"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 torch.save(model.state_dict(), os.path.join(SAVE_DIR, "unetpp_flood_full.pth"))
@@ -496,9 +496,9 @@ torch.onnx.export(
 model = model.to(DEVICE)  # move back to GPU
 
 print("Saved:")
-print("  Full model  →", SAVE_DIR + "\\unetpp_flood_full.pth")
-print("  Weights     →", SAVE_DIR + "\\unetpp_flood_weights.pth")
-print("  ONNX export →", SAVE_DIR + "\\unetpp_flood.onnx")
+print("  Full model  ->", SAVE_DIR + "\\unetpp_flood_full.pth")
+print("  Weights     ->", SAVE_DIR + "\\unetpp_flood_weights.pth")
+print("  ONNX export ->", SAVE_DIR + "\\unetpp_flood.onnx")
 
 
 # In[13]:
@@ -507,7 +507,7 @@ print("  ONNX export →", SAVE_DIR + "\\unetpp_flood.onnx")
 # =====================================
 # BLOCK 11 - TRAINING PLOTS
 # =====================================
-PLOT_DIR = r"D:\FLOOD_DETECTION_PROJECT\plots"
+PLOT_DIR = r"plots"
 os.makedirs(PLOT_DIR, exist_ok=True)
 
 plt.figure(figsize=(10, 4))
@@ -520,7 +520,7 @@ plt.legend()
 plt.grid(True)
 plt.tight_layout()
 plt.savefig(os.path.join(PLOT_DIR, "loss_curve.png"))
-plt.show()
+plt.close()
 print("Loss curve saved.")
 
 
@@ -560,7 +560,7 @@ for row, idx in enumerate(indices):
 plt.suptitle("Flood Detection — Predictions vs Ground Truth", fontsize=15)
 plt.tight_layout()
 plt.savefig(os.path.join(PLOT_DIR, "predictions.png"), bbox_inches="tight")
-plt.show()
+plt.close()
 print("Prediction plot saved.")
 
 

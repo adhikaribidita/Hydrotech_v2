@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "bac
 from main import clean_mask, clean_mask_v2, _run_tta_inference
 
 # ── Paths ────────────────────────────────────────────────────────────────────
-PROJECT = r"D:\FLOOD_DETECTION_PROJECT"
+PROJECT = r"c:\Users\pinak\Desktop\hydrotech\HydroTech-AI-Flood-Detection"
 MODEL_PATH = os.path.join(PROJECT, "best_model.pth")
 VAL_IMG_DIR = os.path.join(PROJECT, "dataset", "val_images")
 OUT_DIR = os.path.join(PROJECT, "test_results", "quality_comparison")

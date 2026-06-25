@@ -3,10 +3,10 @@ import os
 import shutil
 import random
 
-TRAIN_IMG  = r"D:\FLOOD_DETECTION_PROJECT\dataset\train_images"
-TRAIN_MASK = r"D:\FLOOD_DETECTION_PROJECT\dataset\train_masks"
-VAL_IMG    = r"D:\FLOOD_DETECTION_PROJECT\dataset\val_images"
-VAL_MASK   = r"D:\FLOOD_DETECTION_PROJECT\dataset\val_masks"
+TRAIN_IMG  = r"dataset\train_images"
+TRAIN_MASK = r"dataset\train_masks"
+VAL_IMG    = r"dataset\val_images"
+VAL_MASK   = r"dataset\val_masks"
 
 all_images = os.listdir(TRAIN_IMG)
 matched = []

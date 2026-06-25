@@ -267,59 +267,45 @@ def run_cv_fallback(image_bgr):
     """
     resized = cv2.resize(image_bgr, (IMG_SIZE, IMG_SIZE))
     hsv = cv2.cvtColor(resized, cv2.COLOR_BGR2HSV)
-    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    h, s, v = hsv[:, :, 0].astype(np.float32), hsv[:, :, 1].astype(np.float32), hsv[:, :, 2].astype(np.float32)
     
     b = resized[:, :, 0].astype(np.float32)
     g = resized[:, :, 1].astype(np.float32)
     r = resized[:, :, 2].astype(np.float32)
     
-    # Calculate ratios and indices
-    b_r_ratio = b / (r + 1.0)
-    g_r_ratio = g / (r + 1.0)
-    ndwi = (g - r) / (g + r + 1e-6)
-    br_index = (b - r) / (b + r + 1e-6)
+    # Normalize RGB for color indices
+    sum_rgb = b + g + r + 1e-6
+    b_norm, g_norm, r_norm = b / sum_rgb, g / sum_rgb, r / sum_rgb
+
+    # Excess Green Index (ExG) - extremely robust for vegetation
+    exg = 2 * g_norm - r_norm - b_norm
     
-    # Smoothness / Texture filter (water surface is flat/smooth)
+    # Smoothness / Texture filter (water surface is relatively smooth)
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
     grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
     grad_mag = cv2.magnitude(grad_x, grad_y)
     smoothness = cv2.boxFilter(grad_mag, -1, (7, 7))
-    is_smooth = smoothness < 12.0
+    is_smooth = smoothness < 20.0
     
-    # Exclude conditions
-    # Vegetation has H in [35, 85] but very low blue bias (b_r_ratio < 0.75)
-    is_veg = (h >= 35) & (h <= 85) & (b_r_ratio < 0.75)
-    is_shadow = v < 15  # Raised shadow threshold slightly
-    is_bright = (v > 225) & (s < 50)
-    
-    # Base probability score
+    # Base probability map
     prob = np.zeros_like(v, dtype=np.float32)
     
-    # Blue/Teal water color matching
-    prob[(h >= 75) & (h <= 145) & (s >= 15) & (v >= 15) & (v <= 225)] += 0.6
+    # 1. Blue/Teal Water
+    prob[(h >= 80) & (h <= 140) & (s >= 20) & (v >= 20)] += 0.6
     
-    # Green water color matching (e.g. algae/turbid water)
-    prob[(h >= 35) & (h < 75) & (s >= 15) & (v >= 15) & (v <= 180) & (g_r_ratio > 1.0)] += 0.5
+    # 2. Dark/Deep Water
+    prob[(v >= 10) & (v < 80) & (s < 100) & is_smooth] += 0.6
     
-    # Muddy/Brown water color matching (brown has Hue in orange/yellow range, must be smooth)
-    prob[(h >= 5) & (h < 35) & (s >= 10) & (s <= 180) & (v >= 20) & (v <= 180) & is_smooth] += 0.5
+    # 3. Muddy/Turbid Water (brown/grey, smooth, NOT green)
+    prob[(h >= 10) & (h <= 40) & (s >= 10) & (s <= 120) & (v >= 30) & (v <= 200) & is_smooth & (exg < 0.05)] += 0.5
     
-    # Deep/Dark water matching (enforces v >= 15)
-    prob[(v >= 15) & (v < 35) & (s < 50) & is_smooth & (b_r_ratio > 0.95)] += 0.5
-    
-    # Add index components
-    prob += 0.2 * np.clip(br_index, 0.0, 1.0)
-    prob += 0.2 * np.clip(ndwi, 0.0, 1.0)
-    
-    # Penalize non-water features
-    prob[is_veg] -= 0.6
-    prob[is_shadow] -= 0.5
-    prob[is_bright] -= 0.5
-    
-    # Optimize: Penalize urban/grey areas to reduce false positives
-    is_urban = (s < 30) & (v > 80) & (v < 225) & (~is_smooth)
-    prob[is_urban] -= 0.4
+    # Penalties
+    is_veg = (h >= 30) & (h <= 85) & (exg > 0.05) & (s > 20)
+    prob[is_veg] -= 0.8
+    prob[exg > 0.08] -= 0.8          # Strong global vegetation penalty
+    prob[v < 10] -= 0.5              # Extreme shadows
+    prob[(v > 220) & (s < 30)] -= 0.5 # Bright roofs/clouds
     
     prob = np.clip(prob, 0.0, 1.0)
     
