@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Copy backend application files
 COPY main.py .
+COPY best_model.pth .
 
 # Download model weights from HuggingFace Hub (URL injected via MODEL_URL build arg or env var)
 # If MODEL_URL is not set the app falls back to adaptive-threshold inference automatically.
